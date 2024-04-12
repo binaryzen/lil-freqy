@@ -1,0 +1,151 @@
+<!doctype html>
+<html>
+<head>
+    <script type="module">
+        import { freqLine } from './src/viz/freqLine.js';
+        import { ruleLiner } from './src/viz/ruleLiner.js';
+        import { pitchInfo } from './src/viz/pitchInfo.js';
+        import { waveRoll } from './src/viz/waveRoll.js';
+        import { peakStats } from './src/viz/peakStats.js';
+        import { timer } from './src/controller/realTimeController.js';
+
+        window.freqLine = freqLine;
+        window.ruleLiner = ruleLiner;
+        window.pitchInfo = pitchInfo;
+        window.waveRoll = waveRoll;
+        window.peakStats = peakStats;
+        window.timer = timer;
+
+        init();
+    </script>
+</head>
+<body>
+
+<canvas width="600" height="600" id="canvas"></canvas>
+<script>
+    const name_for_key = key_ndx => Object.entries( KEY_NDX )
+        .filter( ([_,v]) => v == key_ndx % 12 )
+        .map( ([k,_]) => k.replace("s","#") )[0] || console.error("bad key index", key_ndx);
+
+    const T_SMOOTH = 0;
+    const MAX_FFT_SIZE = 2 ** 15;
+    const FFT_SIZE = MAX_FFT_SIZE;
+
+    let MIN_T = 1/100;
+    let T0 = Date.now();
+    let T1 = Date.now();
+    const dt = () => ( T1 - T0 )/1000;
+
+    let audioContext,
+        audioSource,
+        analyser,
+        freqBuffer,
+        waveBuffer,
+        peakStats;
+
+    let active = true;
+    let H = 600;
+    let W = 600;
+
+    let canvas = document.querySelector("canvas");
+    let cx = canvas.getContext("2d");
+    let out = document.querySelector("input");
+
+    cx.fillStyle = "black";
+    cx.fillRect( 0, 0, W, H );
+
+    function draw() {
+        window.timer.update();
+        requestAnimationFrame( draw );
+
+        T0 = T1;
+        if ( active ) {
+            if (( Date.now() - T0 )/1000 > MIN_T ) {
+                T1 = Date.now();
+                updateBuffers();
+            }
+            cx.fillStyle = "black";
+            cx.fillRect( 0, 0, W, H );
+
+
+            let freqLineArgs = {
+                context: cx,
+                model: peakStats,
+                stackOctaves: true,
+                x: 20, y: 0, w: 80, h: H
+            };
+            let rulerArgs = {
+                context: cx,
+                n: [ 2, 12, 5 ],
+                rgb: [ 0, 255, 255 ],
+                vertical: true,
+                ruleFilter: i => i,
+                labels: [[], ["A#","B","C","C#","D","D#","E","F","F#","G","G#","A"].reverse()],
+                x: 0, y: 0, w: W, h: H
+            };
+            let ruler2Args = {
+                context: cx,
+                n: 4,
+                rgb: [ 255, 255, 255 ],
+                horizontal: true,
+                ruleFilter: i => i === 1,
+                x: 0, y: 0, w: W, h: H
+            };
+            let pitchArgs = {
+                context: cx,
+                model: peakStats,
+                x: 100, y: 10, w: W, h: H
+            };
+            let waveRollArgs = {
+                context: cx,
+                model: peakStats,
+                minBinFreq: 0,
+                maxBinFreq: 24000,
+                freqFilter: f => ( f > 55 && f < 7040 ),
+                timer: window.timer,
+                x: 20, y: 0, w: ( W - 20 / 2 ), h: H
+            };
+
+            window.ruleLiner.render2d( rulerArgs );
+            window.freqLine.render2d( freqLineArgs );
+            window.pitchInfo.render2d( pitchArgs );
+            window.waveRoll.render2d( waveRollArgs );
+        }
+    }
+
+    function updateBuffers() {
+        analyser.getFloatTimeDomainData( waveBuffer );
+        analyser.getByteFrequencyData( freqBuffer );
+        peakStats = window.peakStats({
+            bins: freqBuffer,
+            buffer: waveBuffer,
+        });
+    }
+
+    let initialized = false;
+    function init() {
+        if ( initialized ) return;
+        initialized = true;
+        navigator.mediaDevices.getUserMedia({ audio:true })
+            .then( audioStream =>
+                {
+                    audioContext = new AudioContext();
+                    analyser = audioContext.createAnalyser();
+                    audioSource = audioContext.createMediaStreamSource( audioStream );
+                    audioSource.connect( analyser );
+
+                    analyser.fftSize = FFT_SIZE;
+                    analyser.smoothingTimeConstant = T_SMOOTH;
+
+                    freqBuffer = new Uint8Array( analyser.frequencyBinCount );
+                    waveBuffer = new Float32Array( analyser.fftSize );
+
+                    draw();
+                }
+            );
+    }
+
+</script>
+
+</body>
+</html>
